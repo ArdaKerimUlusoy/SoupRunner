@@ -1,28 +1,40 @@
-using System.Collections;
+ï»¿using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.SceneManagement;
 
 [RequireComponent(typeof(CharacterController))]
 public class SimpleRunnerController : MonoBehaviour
 {
-    [Header("Hýz & Ýlerleme Ayarlarý")]
-    public float baseWalkSpeed = 6.5f;       // Baþlangýç yürüme hýzý
-    public float maxWalkSpeed = 15f;         // Mesafeyle ulaþýlabilecek tavan yürüme hýzý
-    public float speedIncreaseRate = 0.005f;  // Metre baþýna hýzlanma katsayýsý
-    public float sprintMultiplier = 1.45f;   // Shift depar çarpaný
-    public float reverseSpeedMultiplier = 0.5f; // S tuþu yavaþlama/geri çarpaný
+    [Header("Runner Controls")]
+    public float strafeSpeed = 10.5f;
 
-    [Header("Fizik & Sýnýrlar")]
-    public float jumpHeight = 1.6f;
+    [Header("Passive Speed Escalation")]
+    public float baseWalkSpeed = 8.5f;
+    public float maxWalkSpeed = 34f;
+    public float passiveSpeedRamp = 0.038f;
+    public float wSprintBoostMultiplier = 1.25f;
+    public float brakeMultiplier = 0.60f;
+
+    [Header("Counter Torque Tuning")]
+    public float minLateralTorque = 24.0f;
+    public float maxLateralTorque = 28.5f;
+    public float minForwardTorque = 14.0f;
+    public float maxForwardTorque = 21.0f;
+    public float minBrakeTorque = 16.0f;
+    public float maxBrakeTorque = 22.0f;
+
+    [Header("Physics & Bounds")]
+    public float jumpHeight = 1.8f;
     public float gravity = -22f;
     public float minX = -3.2f;
     public float maxX = 3.2f;
 
-    [Header("Dinamik Çarpýþma Hasarý")]
-    public float baseObstacleDamage = 16f;   // Düþük hýzda çarpýnca gidecek taban çorba %'si
+    [Header("Obstacle Damage")]
+    public float baseObstacleDamage = 16f;
     public float hitCooldown = 0.5f;
 
-    [Header("Efekt Referanslarý")]
+    [Header("Effects")]
     public Camera playerCamera;
     public ParticleSystem speedWindFX;
 
@@ -33,7 +45,15 @@ public class SimpleRunnerController : MonoBehaviour
     private float startZ;
     private float currentEffectiveSpeed = 0f;
     private Vector3 camOriginalLocalPos;
+    private Quaternion camOriginalLocalRot;
     private float defaultFOV = 60f;
+
+    private bool wasGroundedLastFrame = true;
+    private float footstepTimer = 0f;
+    private float cameraLandingJolt = 0f;
+
+    private bool isSpicyTurbo = false;
+    private float spicyTurboTimer = 0f;
 
     private void Awake()
     {
@@ -45,12 +65,14 @@ public class SimpleRunnerController : MonoBehaviour
         {
             defaultFOV = playerCamera.fieldOfView;
             camOriginalLocalPos = playerCamera.transform.localPosition;
+            camOriginalLocalRot = playerCamera.transform.localRotation;
         }
     }
 
     private void Start()
     {
         startZ = transform.position.z;
+        wasGroundedLastFrame = controller.isGrounded;
     }
 
     private void Update()
@@ -58,65 +80,99 @@ public class SimpleRunnerController : MonoBehaviour
         Keyboard keyboard = Keyboard.current;
         if (keyboard == null) return;
 
-        if (controller.isGrounded && verticalVelocity.y < 0)
+        if (keyboard.rKey.wasPressedThisFrame)
+        {
+            Time.timeScale = 1f;
+            SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+            return;
+        }
+
+        UpdateTurboTimer();
+
+        bool isGrounded = controller.isGrounded;
+        if (isGrounded && verticalVelocity.y < 0)
         {
             verticalVelocity.y = -2f;
         }
 
-        // 1. Mesafeye Göre Dinamik Hýz Tabaný
         float currentDistance = Mathf.Max(0f, transform.position.z - startZ);
-        float distanceScaledSpeed = Mathf.Min(baseWalkSpeed + (currentDistance * speedIncreaseRate), maxWalkSpeed);
+        float passiveTrackSpeed = Mathf.Min(baseWalkSpeed + (currentDistance * passiveSpeedRamp), maxWalkSpeed);
 
-        // 2. Oyuncu Giriþleri (W ile ileri, S ile yavaþla/geri, A/D ile saða-sola)
-        float moveX = 0f;
-        float moveZ = 0f;
+        float inputX = 0f;
+        float inputZ = 0f;
 
-        if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) moveZ += 1f;
-        if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) moveZ -= 1f;
-        if (keyboard.aKey.isPressed || keyboard.leftArrowKey.isPressed) moveX -= 1f;
-        if (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed) moveX += 1f;
+        if (keyboard.aKey.isPressed || keyboard.leftArrowKey.isPressed) inputX -= 1f;
+        if (keyboard.dKey.isPressed || keyboard.rightArrowKey.isPressed) inputX += 1f;
+        if (keyboard.wKey.isPressed || keyboard.upArrowKey.isPressed) inputZ += 1f;
+        if (keyboard.sKey.isPressed || keyboard.downArrowKey.isPressed) inputZ -= 1f;
 
-        // Shift ile isteðe baðlý depar
-        bool isSprinting = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+        bool isShiftPressed = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
 
-        float targetSpeed = distanceScaledSpeed;
-        if (moveZ < 0f)
+        float targetForwardSpeed = passiveTrackSpeed;
+
+        if (inputZ > 0.1f || isShiftPressed)
         {
-            targetSpeed *= reverseSpeedMultiplier; // S'ye basýnca yavaþlar
+            targetForwardSpeed *= wSprintBoostMultiplier;
         }
-        else if (isSprinting && moveZ > 0f)
+        else if (inputZ < -0.1f)
         {
-            targetSpeed *= sprintMultiplier; // W + Shift basýnca depar atar
+            targetForwardSpeed *= brakeMultiplier;
         }
 
-        Vector3 moveInput = new Vector3(moveX, 0f, moveZ).normalized;
-        Vector3 move = moveInput * targetSpeed;
+        if (isSpicyTurbo)
+        {
+            targetForwardSpeed *= 1.30f;
+        }
 
-        // Anlýk hýzý takip et (Hasar hesabý için)
+        targetForwardSpeed = Mathf.Min(targetForwardSpeed, maxWalkSpeed * 1.15f);
+
+        float currentXVelocity = inputX * strafeSpeed;
+        Vector3 move = new Vector3(currentXVelocity, 0f, targetForwardSpeed);
         currentEffectiveSpeed = move.magnitude;
 
-        // 3. Rüzgar Efekti & FOV Kontrolü (Hýzlý koþarken kenarlarda rüzgar aksýn)
-        bool shouldShowWind = isSprinting && moveZ > 0f;
-        if (speedWindFX != null)
+        if (soupPhysics != null)
         {
-            if (shouldShowWind && !speedWindFX.isPlaying)
+            float speedT = Mathf.Clamp01((currentEffectiveSpeed - baseWalkSpeed) / (maxWalkSpeed - baseWalkSpeed));
+
+            float curLateralAngle = Mathf.Lerp(minLateralTorque, maxLateralTorque, speedT);
+            float curForwardAngle = Mathf.Lerp(minForwardTorque, maxForwardTorque, speedT);
+            float curBrakeAngle = Mathf.Lerp(minBrakeTorque, maxBrakeTorque, speedT);
+
+            float sustainedRoll = -inputX * curLateralAngle;
+
+            float sustainedPitch = 0f;
+            if (inputZ > 0.1f || isShiftPressed)
             {
-                speedWindFX.Play();
+                sustainedPitch = -curForwardAngle;
             }
-            else if (!shouldShowWind && speedWindFX.isPlaying)
+            else if (inputZ < -0.1f)
             {
-                speedWindFX.Stop();
+                sustainedPitch = curBrakeAngle;
+            }
+
+            soupPhysics.SetRunnerInputTorques(sustainedRoll, sustainedPitch);
+
+            if (isGrounded && currentEffectiveSpeed > 1f)
+            {
+                footstepTimer += Time.deltaTime * currentEffectiveSpeed * 0.65f;
+                float gaitIntensity = Mathf.Lerp(1.2f, 2.8f, speedT);
+                float bobRoll = Mathf.Sin(footstepTimer) * gaitIntensity;
+                float bobPitch = Mathf.Abs(Mathf.Cos(footstepTimer)) * (gaitIntensity * 0.5f);
+                soupPhysics.ApplyRunningBobbing(bobRoll, bobPitch);
+
+                float stepInterval = Mathf.Lerp(0.38f, 0.20f, speedT);
+                if (SoupAudio.Instance != null)
+                {
+                    SoupAudio.Instance.PlayFootstep(speedT > 0.45f, stepInterval);
+                }
+            }
+            else
+            {
+                soupPhysics.ApplyRunningBobbing(0f, 0f);
             }
         }
 
-        if (playerCamera != null)
-        {
-            float targetFOV = shouldShowWind ? (defaultFOV + 8f) : defaultFOV;
-            playerCamera.fieldOfView = Mathf.Lerp(playerCamera.fieldOfView, targetFOV, Time.deltaTime * 6f);
-        }
-
-        // 4. Zýplama
-        if (keyboard.spaceKey.wasPressedThisFrame && controller.isGrounded)
+        if (keyboard.spaceKey.wasPressedThisFrame && isGrounded)
         {
             verticalVelocity.y = Mathf.Sqrt(jumpHeight * -2f * gravity);
             if (soupPhysics != null)
@@ -130,12 +186,76 @@ public class SimpleRunnerController : MonoBehaviour
         Vector3 finalVelocity = (move + verticalVelocity) * Time.deltaTime;
         controller.Move(finalVelocity);
 
-        // Þerit sýnýrlarý
+        if (!wasGroundedLastFrame && controller.isGrounded && verticalVelocity.y < 0f)
+        {
+            float impactFallSpeed = Mathf.Abs(verticalVelocity.y);
+            if (soupPhysics != null)
+            {
+                soupPhysics.OnGroundLanding(impactFallSpeed);
+            }
+            cameraLandingJolt = Mathf.Clamp(impactFallSpeed * 0.012f, 0.02f, 0.08f);
+        }
+        wasGroundedLastFrame = controller.isGrounded;
+
         Vector3 clampedPos = transform.position;
         if (clampedPos.x < minX || clampedPos.x > maxX)
         {
             clampedPos.x = Mathf.Clamp(clampedPos.x, minX, maxX);
             transform.position = clampedPos;
+        }
+
+        UpdateCameraAndVisualEffects(currentEffectiveSpeed / maxWalkSpeed, inputX);
+    }
+
+    public void TriggerSpicyTurbo(float duration)
+    {
+        isSpicyTurbo = true;
+        spicyTurboTimer = Mathf.Max(spicyTurboTimer, duration);
+        if (SoupAudio.Instance != null) SoupAudio.Instance.PlayWhoosh();
+    }
+
+    private void UpdateTurboTimer()
+    {
+        if (isSpicyTurbo)
+        {
+            spicyTurboTimer -= Time.deltaTime;
+            if (spicyTurboTimer <= 0f)
+            {
+                isSpicyTurbo = false;
+            }
+        }
+    }
+
+    public bool IsSpicyTurboActive() => isSpicyTurbo;
+    public float GetSpicyTurboRemainingTime() => spicyTurboTimer;
+
+    private void UpdateCameraAndVisualEffects(float speedRatio, float inputX)
+    {
+        bool showWind = (speedRatio > 0.65f) || isSpicyTurbo;
+        if (speedWindFX != null)
+        {
+            if (showWind && !speedWindFX.isPlaying)
+            {
+                speedWindFX.Play();
+            }
+            else if (!showWind && speedWindFX.isPlaying)
+            {
+                speedWindFX.Stop();
+            }
+        }
+
+        if (playerCamera != null)
+        {
+            float targetFOV = isSpicyTurbo ? (defaultFOV + 14f) : (defaultFOV + (speedRatio * 10f));
+            playerCamera.fieldOfView = Mathf.Lerp(playerCamera.fieldOfView, targetFOV, Time.deltaTime * 5f);
+
+            cameraLandingJolt = Mathf.Lerp(cameraLandingJolt, 0f, Time.deltaTime * 12f);
+            Vector3 camPos = camOriginalLocalPos + new Vector3(0f, -cameraLandingJolt, 0f);
+            playerCamera.transform.localPosition = camPos;
+
+            float targetCamRoll = -inputX * 1.5f;
+            Quaternion targetRot = camOriginalLocalRot * Quaternion.Euler(0f, 0f, targetCamRoll);
+            playerCamera.transform.localRotation = Quaternion.Slerp(playerCamera.transform.localRotation, targetRot, Time.deltaTime * 8f);
         }
     }
 
@@ -158,25 +278,25 @@ public class SimpleRunnerController : MonoBehaviour
                           hitObject.name.Contains("Obstacle") ||
                           hitObject.name.Contains("Barrier") ||
                           hitObject.name.Contains("Hammer") ||
-                          hitObject.name.Contains("spikewall");
+                          hitObject.name.Contains("spikewall") ||
+                          hitObject.name.Contains("blade") ||
+                          hitObject.name.Contains("log") ||
+                          hitObject.name.Contains("Root") ||
+                          hitObject.name.Contains("root");
 
         if (isObstacle)
         {
             lastHitTime = Time.time;
 
-            // Hýza Göre Dinamik Çorba Hasarý:
-            // Yavaþ çarpýlýrsa (örneðin hýz 6 ise) ~16% çorba gider.
-            // Shift + yüksek hýzda çarpýlýrsa (örneðin hýz 18 ise) ~40% ve üzeri çorba fýrlar.
-            float speedFactor = Mathf.Clamp(currentEffectiveSpeed / baseWalkSpeed, 0.8f, 2.6f);
+            float speedFactor = Mathf.Clamp(currentEffectiveSpeed / baseWalkSpeed, 0.9f, 2.5f);
             float finalDamage = baseObstacleDamage * speedFactor;
+            float pushDir = (transform.position.x < hitObject.transform.position.x) ? -1f : 1f;
 
             if (soupPhysics != null)
             {
-                soupPhysics.OnHitObstacle(finalDamage);
+                soupPhysics.OnHitObstacle(finalDamage, pushDir);
             }
 
-            // Savrulma ve kamera darbesi
-            float pushDir = (transform.position.x < hitObject.transform.position.x) ? -1f : 1f;
             StopCoroutine("KnockbackRoutine");
             StartCoroutine(KnockbackRoutine(pushDir, speedFactor));
         }
@@ -196,12 +316,15 @@ public class SimpleRunnerController : MonoBehaviour
             if (playerCamera != null)
             {
                 float shake = Random.Range(-0.06f, 0.06f) * intensity;
-                playerCamera.transform.localPosition = camOriginalLocalPos + new Vector3(shake, 0f, 0f);
+                playerCamera.transform.localPosition = camOriginalLocalPos + new Vector3(shake, Random.Range(-0.03f, 0.03f) * intensity, 0f);
             }
 
             yield return null;
         }
 
-        if (playerCamera != null) playerCamera.transform.localPosition = camOriginalLocalPos;
+        if (playerCamera != null)
+        {
+            playerCamera.transform.localPosition = camOriginalLocalPos;
+        }
     }
 }
