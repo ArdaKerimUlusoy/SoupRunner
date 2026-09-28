@@ -346,11 +346,18 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 70e14dccd08302f43a1db2a078916633, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::SimpleRunnerController
+  strafeSpeed: 10.5
   baseWalkSpeed: 7
   maxWalkSpeed: 16
-  speedIncreaseRate: 0.005
-  sprintMultiplier: 1.4
-  reverseSpeedMultiplier: 0.5
+  passiveSpeedRamp: 0.038
+  wSprintBoostMultiplier: 1.25
+  brakeMultiplier: 0.6
+  minLateralTorque: 24
+  maxLateralTorque: 28.5
+  minForwardTorque: 14
+  maxForwardTorque: 21
+  minBrakeTorque: 16
+  maxBrakeTorque: 22
   jumpHeight: 1.8
   gravity: -20
   minX: -3.2
@@ -500,12 +507,19 @@ MonoBehaviour:
   mouseSensitivityY: 0.15
   maxTiltRoll: 35
   maxTiltPitch: 25
-  panicWhipThreshold: 65
+  potCenteringSpeed: 3.5
+  requireMouseHold: 0
+  enableTightGrip: 1
+  invertMouseX: 0
+  invertMouseY: 0
+  autoLockCursor: 1
   spillAngleThreshold: 22
-  spillRate: 18
   jumpTakeoffSpill: 4
   fullSoupHeight: 0.23
   emptySoupHeight: 0.02
+  inertiaResponsiveness: 8
+  runningGaitSensitivity: 0.65
+  landingImpactSensitivity: 0.9
 --- !u!1 &195839322
 GameObject:
   m_ObjectHideFlags: 0
@@ -550,6 +564,7 @@ MonoBehaviour:
   - {fileID: 4107159299959341971, guid: 3d9200d81175a46c89f8c1b896927fb5, type: 3}
   baseObstacleChance: 0.5
   maxObstacleChance: 0.95
+  pickupSpawnChance: 0.48
   lanePositionsX:
   - -2.4
   - 0
@@ -1755,6 +1770,84 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::SoupWaveTexture
   waveSpeedX: 0.15
   waveSpeedY: 0.12
+--- !u!1 &904419728
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 904419730}
+  - component: {fileID: 904419729}
+  m_Layer: 0
+  m_Name: Enviroment
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &904419729
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 904419728}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 48540835fe568444195f9ac5f35326c7, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::EnvironmentBeautifier
+  roadObjectName: Road
+  seed: 1234
+  applyFog: 1
+  fogColor: {r: 0.64, g: 0.79, b: 0.93, a: 1}
+  fogStart: 35
+  fogEnd: 175
+  adjustSun: 1
+  sunColor: {r: 1, g: 0.95, b: 0.85, a: 1}
+  applyPostProcessing: 1
+  improveRoad: 1
+  roadTiling: {x: 2, y: 7}
+  asphaltTint: {r: 0.92, g: 0.92, b: 0.95, a: 1}
+  laneMarkings: 1
+  dashedLineX:
+  - -1.2
+  - 1.2
+  edgeLines: 1
+  edgeLineInset: 0.25
+  dashLength: 3
+  dashPeriod: 6
+  lineWidth: 0.14
+  lineColor: {r: 0.96, g: 0.96, b: 0.92, a: 1}
+  grassGround: 1
+  groundY: -0.25
+  grassTileSize: 8
+  shoulders: 1
+  shoulderWidth: 2.2
+  hideOldBuildings: 1
+  trees: 1
+  treeDensity: 1
+  farTreeDistance: 55
+  streetLamps: 1
+  lampSpacing: 15
+  hills: 1
+--- !u!4 &904419730
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 904419728}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &1123930390
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -2542,6 +2635,13 @@ MonoBehaviour:
   mainMenuSceneName: MainMenu
   normalSoupColor: {r: 1, g: 0.35, b: 0.05, a: 1}
   dangerSoupColor: {r: 0.9, g: 0.1, b: 0.1, a: 1}
+  showBalanceMeter: 1
+  showControlsBanner: 1
+  balanceMeterRoot: {fileID: 0}
+  balancePuck: {fileID: 0}
+  balancePuckImage: {fileID: 0}
+  spillWarningText: {fileID: 0}
+  braceText: {fileID: 0}
 --- !u!1 &1457906019
 GameObject:
   m_ObjectHideFlags: 0
@@ -13799,3 +13899,4 @@ SceneRoots:
   - {fileID: 181159582}
   - {fileID: 1423548602}
   - {fileID: 4357306}
+  - {fileID: 904419730}
